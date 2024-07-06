@@ -108,6 +108,10 @@ static size_t g_num_samples = 1024;
 
 static bool g_mirror = false;
 
+static bool g_hzw = false;
+static LinearImage g_hzw_reflection_map;
+static utils::Path g_hzw_reflection_map_path;
+
 // -----------------------------------------------------------------------------------------------
 
 static void generateMipmaps(utils::JobSystem& js, std::vector<Cubemap>& levels,
@@ -198,6 +202,8 @@ static void printUsage(char* name) {
             "       Roughness pre-filter into <dir>\n\n"
             "   --sh-shader\n"
             "       Generate irradiance SH for shader code\n\n"
+            "   --hzw\n"
+            "       Generate HzW skydome maps\n\n"
             "\n"
             "Private use only:\n"
             "   --ibl-dfg=filename.[exr|hdr|psd|png|rgbm|rgb32f|dds|h|hpp|c|cpp|inc|txt]\n"
@@ -273,6 +279,7 @@ static int handleCommandLineArgments(int argc, char* argv[]) {
             { "deploy",               required_argument, nullptr, 'x' },
             { "no-mirror",                  no_argument, nullptr, 'm' },
             { "debug",                      no_argument, nullptr, 'd' },
+            { "hzw",                        no_argument, nullptr, 'H' },
             { nullptr, 0, nullptr, 0 }  // termination of the option list
     };
     int opt;
@@ -452,6 +459,9 @@ static int handleCommandLineArgments(int argc, char* argv[]) {
             case 'm':
                 g_mirror = true;
                 break;
+            case 'H':
+                g_hzw = true;
+                break;
         }
     }
 
@@ -526,6 +536,11 @@ int main(int argc, char* argv[]) {
         g_prefilter_dir = g_deploy_dir;
     }
 
+    if (g_hzw) {
+        g_hzw_reflection_map_path = iname.getParent();
+        g_hzw_reflection_map_path += iname.getNameWithoutExtension() + "_reflection" + ImageEncoder::chooseExtension(g_format);
+    }
+
     // Images store the actual data
     std::vector<Image> images;
 
@@ -579,6 +594,16 @@ int main(int argc, char* argv[]) {
             Image temp;
             Cubemap cml = CubemapUtils::create(temp, dim);
             CubemapUtils::equirectangularToCubemap(js, cml, inputImage);
+            images.push_back(std::move(temp));
+            levels.push_back(std::move(cml));
+        } else if (isPOT(height) && (height * 6 == width)) {
+            size_t dim = g_output_size ? g_output_size : IBL_DEFAULT_SIZE;
+            if (!g_quiet) {
+                std::cout << "Loading strip... " << std::endl;
+            }
+            Image temp;
+            Cubemap cml = CubemapUtils::create(temp, dim);
+            CubemapUtils::stripToCubemap(js, cml, inputImage);
             images.push_back(std::move(temp));
             levels.push_back(std::move(cml));
         } else {
@@ -940,6 +965,10 @@ void iblRoughnessPrefilter(
         minLod = 0;
     }
 
+    if (g_hzw) {
+        g_hzw_reflection_map = LinearImage((1U << baseExp) * 6, (1U << baseExp) * 2, 3);
+    }
+
     size_t numSamples = g_num_samples;
     const size_t numLevels = (baseExp + 1) - minLod;
 
@@ -1037,6 +1066,29 @@ void iblRoughnessPrefilter(
                     + ("m" + std::to_string(level) + "_" + CubemapUtils::getFaceName(face) + ext);
             saveImage(filename, g_format, dst.getImageForFace(face), g_compression);
         }
+
+        if (g_hzw) {
+            uint32_t dwidth = g_hzw_reflection_map.getWidth();
+            for (size_t j = 0; j < 6; j++) {
+                Cubemap::Face face = (Cubemap::Face)j;
+                LinearImage linearImage = toLinearImage(dst.getImageForFace(face));
+                uint32_t swidth = linearImage.getWidth();
+                uint32_t sheight = linearImage.getHeight();
+                uint32_t dx = j * swidth;
+                uint32_t dy = 1U << i;
+                float* dst = g_hzw_reflection_map.getPixelRef() + (dy * dwidth + dx) * 3;
+                for (int32_t row = 0; row < sheight; ++row) {
+                    float const* src = linearImage.getPixelRef() + row * swidth * 3;
+                    memcpy(dst, src, swidth * 3 * sizeof(float));
+                    dst += dwidth * 3;
+                }
+            }
+        }
+    }
+
+    if (g_hzw) {
+        std::ofstream outputStream(g_hzw_reflection_map_path, std::ios::binary | std::ios::trunc);
+        ImageEncoder::encode(outputStream, g_format, g_hzw_reflection_map, g_compression, g_hzw_reflection_map_path);
     }
 
     if (g_type == OutputType::KTX) {

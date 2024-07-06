@@ -97,6 +97,9 @@ public:
     //! Converts horizontal or vertical cross Image to a Cubemap
     static void crossToCubemap(utils::JobSystem& js, Cubemap& dst, const Image& src);
 
+    //! Converts horizontal strip Image to a Cubemap
+    static void stripToCubemap(utils::JobSystem& js, Cubemap& dst, const Image& src);
+
     //! Converts equirectangular Image to a Cubemap
     static void equirectangularToCubemap(utils::JobSystem& js, Cubemap& dst, const Image& src);
 

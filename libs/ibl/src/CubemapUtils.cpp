@@ -351,6 +351,50 @@ void CubemapUtils::crossToCubemap(JobSystem& js, Cubemap& dst, const Image& src)
             });
 }
 
+void CubemapUtils::stripToCubemap(JobSystem& js, Cubemap& dst, const Image& src) {
+    process<EmptyState>(dst, js,
+        [&](EmptyState&, size_t iy, Cubemap::Face f, Cubemap::Texel* data, size_t dimension) {
+            for (size_t ix = 0; ix < dimension; ++ix, ++data) {
+                // find offsets from face
+                size_t x = ix;
+                size_t y = iy;
+                size_t dx = 0;
+                size_t dy = 0;
+                size_t dim = src.getWidth() / 6;
+
+                switch (f) {
+                case Cubemap::Face::NX:
+                    dx = dim;
+                    break;
+                case Cubemap::Face::PX:
+                    dx = 0;
+                    break;
+                case Cubemap::Face::NY:
+                    dx = 3 * dim;
+                    break;
+                case Cubemap::Face::PY:
+                    dx = 2 * dim;
+                    break;
+                case Cubemap::Face::NZ:
+                    dx = 5 * dim;
+                    break;
+                case Cubemap::Face::PZ:
+                    dx = 4 * dim;
+                    break;
+                }
+
+                size_t sampleCount = std::max(size_t(1), dim / dimension);
+                sampleCount = std::min(size_t(256), sampleCount * sampleCount);
+                for (size_t i = 0; i < sampleCount; i++) {
+                    const float2 h = hammersley(uint32_t(i), 1.0f / sampleCount);
+                    size_t u = dx + size_t((x + h.x) * dim / dimension);
+                    size_t v = dy + size_t((y + h.y) * dim / dimension);
+                    Cubemap::writeAt(data, Cubemap::sampleAt(src.getPixelRef(u, v)));
+                }
+            }
+        });
+}
+
 const char* CubemapUtils::getFaceName(Cubemap::Face face) {
     switch (face) {
         case Cubemap::Face::NX: return "nx";
